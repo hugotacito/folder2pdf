@@ -1,0 +1,310 @@
+"""Core logic for converting a folder's contents to a PDF document."""
+
+import os
+from pathlib import Path
+from fpdf import FPDF
+
+# File extensions treated as plain text / source code
+TEXT_EXTENSIONS = {
+    ".txt", ".md", ".rst", ".csv", ".tsv", ".json", ".xml", ".yaml", ".yml",
+    ".toml", ".ini", ".cfg", ".conf", ".env", ".log",
+    ".py", ".js", ".ts", ".jsx", ".tsx", ".html", ".htm", ".css", ".scss",
+    ".java", ".c", ".cpp", ".h", ".hpp", ".cs", ".go", ".rs", ".rb", ".php",
+    ".sh", ".bash", ".zsh", ".ps1", ".bat", ".cmd",
+    ".sql", ".r", ".swift", ".kt", ".m", ".lua", ".pl", ".hs",
+    ".dockerfile", ".makefile",
+}
+
+# File extensions treated as images
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".tiff", ".tif"}
+
+# Maximum characters read from a single text file
+_MAX_FILE_CHARS = 100_000
+
+# Points per mm (fpdf uses mm by default)
+_MARGIN = 15
+
+# Search paths for a Unicode-capable monospace TTF font (checked in order)
+_MONO_FONT_CANDIDATES = [
+    "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf",
+    "/System/Library/Fonts/Menlo.ttc",
+    "/Library/Fonts/Courier New.ttf",
+    "C:/Windows/Fonts/cour.ttf",
+]
+
+# Resolved at import time; None means fall back to built-in Courier with sanitisation
+_MONO_FONT_PATH: str | None = next(
+    (p for p in _MONO_FONT_CANDIDATES if os.path.exists(p)), None
+)
+_MONO_FONT_FAMILY = "UniMono"
+
+
+def _sanitize_for_builtin_font(text: str) -> str:
+    """Replace characters outside Latin-1 with a '?' placeholder."""
+    return text.encode("latin-1", errors="replace").decode("latin-1")
+
+
+def _is_text_file(path: Path) -> bool:
+    """Return True if *path* should be treated as a text/source-code file."""
+    return path.suffix.lower() in TEXT_EXTENSIONS
+
+
+def _is_image_file(path: Path) -> bool:
+    """Return True if *path* should be treated as an image."""
+    return path.suffix.lower() in IMAGE_EXTENSIONS
+
+
+def _read_text_safe(path: Path, max_chars: int = _MAX_FILE_CHARS) -> str:
+    """Read text from *path*, truncating at *max_chars* if needed."""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            content = fh.read(max_chars)
+        if len(content) == max_chars:
+            content += "\n\n[... file truncated ...]"
+        return content
+    except OSError as exc:
+        return f"[Error reading file: {exc}]"
+
+
+def _collect_files(
+    folder: Path,
+    include_images: bool = True,
+    extensions: set[str] | None = None,
+) -> list[Path]:
+    """
+    Walk *folder* recursively and return a sorted list of files to include.
+
+    Parameters
+    ----------
+    folder:
+        Root folder to scan.
+    include_images:
+        Whether to include image files.
+    extensions:
+        If provided, only include files whose suffix (lower-cased) is in this
+        set.  When *None* the default TEXT_EXTENSIONS (plus IMAGE_EXTENSIONS if
+        *include_images* is True) are used.
+    """
+    allowed: set[str]
+    if extensions is not None:
+        allowed = {e.lower() if e.startswith(".") else f".{e.lower()}" for e in extensions}
+    else:
+        allowed = set(TEXT_EXTENSIONS)
+        if include_images:
+            allowed |= IMAGE_EXTENSIONS
+
+    results: list[Path] = []
+    for root, dirs, files in os.walk(folder):
+        # Skip hidden directories (e.g. .git, .venv)
+        dirs[:] = sorted(d for d in dirs if not d.startswith("."))
+        for name in files:
+            if name.startswith("."):
+                continue
+            p = Path(root) / name
+            if p.suffix.lower() in allowed:
+                results.append(p)
+
+    # Return paths in a stable, globally sorted order
+    results.sort(key=lambda p: str(p))
+    return results
+
+
+class FolderPDF(FPDF):
+    """Custom FPDF subclass that adds a header and footer to every page."""
+
+    def __init__(self, folder_name: str, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._folder_name = folder_name
+        self._unicode_mono = False
+
+    def setup_fonts(self) -> None:
+        """Register fonts.  Call once after construction."""
+        if _MONO_FONT_PATH:
+            self.add_font(_MONO_FONT_FAMILY, fname=_MONO_FONT_PATH)
+            self._unicode_mono = True
+
+    def set_mono_font(self, size: int = 8) -> None:
+        """Activate the best available monospace font."""
+        if self._unicode_mono:
+            self.set_font(_MONO_FONT_FAMILY, size=size)
+        else:
+            self.set_font("Courier", size=size)
+
+    def header(self):
+        self.set_font("Helvetica", style="I", size=8)
+        self.set_text_color(150, 150, 150)
+        label = self._folder_name
+        if not self._unicode_mono:
+            label = _sanitize_for_builtin_font(label)
+        self.cell(0, 6, label, align="L")
+        self.ln(2)
+        self.set_text_color(0, 0, 0)
+
+    def footer(self):
+        self.set_y(-12)
+        self.set_font("Helvetica", style="I", size=8)
+        self.set_text_color(150, 150, 150)
+        self.cell(0, 6, f"Page {self.page_no()}", align="C")
+        self.set_text_color(0, 0, 0)
+
+
+def convert(
+    folder: str | Path,
+    output: str | Path = "output.pdf",
+    include_images: bool = True,
+    extensions: list[str] | None = None,
+) -> Path:
+    """
+    Generate a PDF from the contents of *folder*.
+
+    Parameters
+    ----------
+    folder:
+        Path to the directory to scan.
+    output:
+        Destination PDF path.
+    include_images:
+        Whether to embed image files in the PDF.
+    extensions:
+        Optional list of file extensions to include (e.g. ``[".py", ".md"]``).
+        When *None* the built-in defaults are used.
+
+    Returns
+    -------
+    Path
+        Absolute path to the generated PDF file.
+
+    Raises
+    ------
+    ValueError
+        If *folder* does not exist or is not a directory.
+    """
+    folder = Path(folder).resolve()
+    if not folder.exists():
+        raise ValueError(f"Folder does not exist: {folder}")
+    if not folder.is_dir():
+        raise ValueError(f"Path is not a directory: {folder}")
+
+    output = Path(output)
+
+    ext_set: set[str] | None = set(extensions) if extensions is not None else None
+    files = _collect_files(folder, include_images=include_images, extensions=ext_set)
+
+    pdf = FolderPDF(folder_name=str(folder), orientation="P", unit="mm", format="A4")
+    pdf.setup_fonts()
+    pdf.set_margins(_MARGIN, _MARGIN, _MARGIN)
+    pdf.set_auto_page_break(auto=True, margin=_MARGIN)
+
+    # ------------------------------------------------------------------ #
+    # Cover page                                                           #
+    # ------------------------------------------------------------------ #
+    pdf.add_page()
+    pdf.set_font("Helvetica", style="B", size=24)
+    pdf.ln(30)
+    pdf.cell(0, 12, "Folder Contents", align="C", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Helvetica", size=14)
+    pdf.cell(0, 8, folder.name, align="C", new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(4)
+    pdf.set_font("Helvetica", style="I", size=10)
+    pdf.set_text_color(100, 100, 100)
+    pdf.cell(0, 6, str(folder), align="C", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_text_color(0, 0, 0)
+    pdf.ln(8)
+    pdf.set_font("Helvetica", size=10)
+    pdf.cell(0, 6, f"Files included: {len(files)}", align="C", new_x="LMARGIN", new_y="NEXT")
+
+    # ------------------------------------------------------------------ #
+    # Table of contents                                                    #
+    # ------------------------------------------------------------------ #
+    if files:
+        pdf.add_page()
+        pdf.set_font("Helvetica", style="B", size=16)
+        pdf.cell(0, 10, "Table of Contents", new_x="LMARGIN", new_y="NEXT")
+        pdf.ln(2)
+        pdf.set_font("Helvetica", size=9)
+        for f in files:
+            rel = f.relative_to(folder)
+            entry = str(rel)
+            if not pdf._unicode_mono:
+                entry = _sanitize_for_builtin_font(entry)
+            pdf.cell(0, 5, entry, new_x="LMARGIN", new_y="NEXT")
+
+    # ------------------------------------------------------------------ #
+    # File sections                                                        #
+    # ------------------------------------------------------------------ #
+    for f in files:
+        rel = f.relative_to(folder)
+        is_image = _is_image_file(f)
+
+        pdf.add_page()
+
+        # Section heading
+        pdf.set_font("Helvetica", style="B", size=13)
+        pdf.set_fill_color(230, 230, 230)
+        heading = str(rel)
+        if not pdf._unicode_mono:
+            heading = _sanitize_for_builtin_font(heading)
+        pdf.cell(0, 8, heading, fill=True, new_x="LMARGIN", new_y="NEXT")
+        pdf.ln(2)
+
+        if is_image:
+            _add_image_section(pdf, f, rel)
+        else:
+            _add_text_section(pdf, f)
+
+    output.parent.mkdir(parents=True, exist_ok=True)
+    pdf.output(str(output))
+    return output.resolve()
+
+
+def _add_text_section(pdf: FolderPDF, path: Path) -> None:
+    """Add a text/code file section to *pdf*."""
+    content = _read_text_safe(path)
+    if not pdf._unicode_mono:
+        content = _sanitize_for_builtin_font(content)
+    pdf.set_mono_font(size=8)
+    # Multi-cell handles long lines and newlines automatically
+    pdf.multi_cell(0, 4, content)
+
+
+def _add_image_section(pdf: FolderPDF, path: Path, rel: Path) -> None:
+    """Embed an image in *pdf* with a filename annotation/caption."""
+    try:
+        from PIL import Image as PILImage
+
+        with PILImage.open(path) as img:
+            orig_w, orig_h = img.size
+            img_format = img.format or "PNG"
+
+        # Available page width (A4 minus margins)
+        page_w = pdf.w - 2 * _MARGIN
+        page_h = pdf.h - 2 * _MARGIN - 20  # leave room for caption
+
+        # Scale image to fit within the page
+        scale = min(page_w / orig_w, page_h / orig_h, 1.0)
+        draw_w = orig_w * scale
+        draw_h = orig_h * scale
+
+        x = _MARGIN + (page_w - draw_w) / 2  # center horizontally
+        pdf.image(str(path), x=x, w=draw_w, h=draw_h)
+
+        # Caption / annotation
+        pdf.ln(3)
+        pdf.set_font("Helvetica", style="I", size=9)
+        pdf.set_text_color(80, 80, 80)
+        caption = f"{rel.name}  ({orig_w} x {orig_h} px, {img_format})"
+        if not pdf._unicode_mono:
+            caption = _sanitize_for_builtin_font(caption)
+        pdf.cell(0, 5, caption, align="C", new_x="LMARGIN", new_y="NEXT")
+        pdf.set_text_color(0, 0, 0)
+
+    except (OSError, ValueError, RuntimeError) as exc:
+        pdf.set_font("Helvetica", size=10)
+        pdf.set_text_color(180, 0, 0)
+        msg = f"[Could not embed image: {exc}]"
+        if not pdf._unicode_mono:
+            msg = _sanitize_for_builtin_font(msg)
+        pdf.cell(0, 6, msg, new_x="LMARGIN", new_y="NEXT")
+        pdf.set_text_color(0, 0, 0)
+

@@ -76,9 +76,9 @@ def _read_text_safe(path: Path, max_chars: int = _MAX_FILE_CHARS) -> str:
 
 def _load_gitignore_spec(folder: Path):
     """
-    Return a *pathspec* ``PathSpec`` built from all ``.gitignore`` files found
-    inside *folder* (and its parents up to *folder* itself).  Returns *None*
-    when *pathspec* is not installed or no ``.gitignore`` file exists.
+    Return a *pathspec* ``PathSpec`` built from the ``.gitignore`` file found
+    directly inside *folder*.  Returns *None* when *pathspec* is not installed
+    or no ``.gitignore`` file exists in *folder*.
     """
     if not _PATHSPEC_AVAILABLE:
         return None
@@ -224,7 +224,7 @@ def _compute_stats(files: list[Path], folder: Path) -> dict:
             except OSError:
                 lines = 0
             total_lines += lines
-            ext = f.suffix.lower() or "(no ext)"
+            ext = f.suffix.lower() or ""
             lines_by_ext[ext] += lines
 
     return {

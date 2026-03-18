@@ -13,6 +13,7 @@ from folder2pdf.converter import (
     TEXT_EXTENSIONS,
     IMAGE_EXTENSIONS,
     _collect_files,
+    _compute_stats,
     _is_image_file,
     _is_text_file,
     _read_text_safe,
@@ -337,3 +338,154 @@ class TestCLI:
         rc = main([str(src)])
         assert rc == 0
         assert (tmp_path / "output.pdf").exists()
+
+
+# ---------------------------------------------------------------------------
+# New feature tests: gitignore, blacklist, statistics
+# ---------------------------------------------------------------------------
+
+class TestGitignore:
+    def test_gitignore_excludes_file(self, tmp_path):
+        (tmp_path / ".gitignore").write_text("secret.txt\n")
+        (tmp_path / "secret.txt").write_text("secret")
+        (tmp_path / "visible.py").write_text("print('hi')")
+        files = _collect_files(tmp_path, use_gitignore=True)
+        names = {f.name for f in files}
+        assert "secret.txt" not in names
+        assert "visible.py" in names
+
+    def test_gitignore_excludes_by_pattern(self, tmp_path):
+        (tmp_path / ".gitignore").write_text("*.log\n")
+        (tmp_path / "app.log").write_text("log content")
+        # .log IS in TEXT_EXTENSIONS; gitignore should still exclude it
+        (tmp_path / "main.py").write_text("print('hello')")
+        files = _collect_files(tmp_path, use_gitignore=True)
+        names = {f.name for f in files}
+        assert "app.log" not in names
+        assert "main.py" in names
+
+    def test_no_gitignore_flag_keeps_file(self, tmp_path):
+        (tmp_path / ".gitignore").write_text("visible.py\n")
+        (tmp_path / "visible.py").write_text("print('hi')")
+        files = _collect_files(tmp_path, use_gitignore=False)
+        names = {f.name for f in files}
+        assert "visible.py" in names
+
+    def test_missing_gitignore_does_not_crash(self, tmp_path):
+        # No .gitignore present
+        (tmp_path / "script.py").write_text("x = 1")
+        files = _collect_files(tmp_path, use_gitignore=True)
+        assert any(f.name == "script.py" for f in files)
+
+    def test_convert_with_gitignore(self, tmp_path):
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / ".gitignore").write_text("ignored.py\n")
+        (src / "ignored.py").write_text("# ignored")
+        (src / "included.py").write_text("# included")
+        out = tmp_path / "out.pdf"
+        convert(src, output=out, use_gitignore=True)
+        assert out.exists()
+
+    def test_cli_no_gitignore_flag(self, tmp_path):
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / ".gitignore").write_text("script.py\n")
+        (src / "script.py").write_text("# code")
+        out = tmp_path / "out.pdf"
+        rc = main([str(src), "-o", str(out), "--no-gitignore"])
+        assert rc == 0
+        assert out.exists()
+
+
+class TestBlacklist:
+    def test_blacklist_excludes_file_by_name(self, tmp_path):
+        (tmp_path / "secret.txt").write_text("secret")
+        (tmp_path / "visible.py").write_text("visible")
+        files = _collect_files(tmp_path, blacklist=["secret.txt"])
+        names = {f.name for f in files}
+        assert "secret.txt" not in names
+        assert "visible.py" in names
+
+    def test_blacklist_glob_pattern(self, tmp_path):
+        (tmp_path / "test_a.py").write_text("test")
+        (tmp_path / "test_b.py").write_text("test")
+        (tmp_path / "main.py").write_text("main")
+        files = _collect_files(tmp_path, blacklist=["test_*.py"])
+        names = {f.name for f in files}
+        assert "test_a.py" not in names
+        assert "test_b.py" not in names
+        assert "main.py" in names
+
+    def test_blacklist_directory(self, tmp_path):
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        (tests_dir / "test_code.py").write_text("test")
+        (tmp_path / "main.py").write_text("main")
+        files = _collect_files(tmp_path, blacklist=["tests/"])
+        names = {f.name for f in files}
+        assert "test_code.py" not in names
+        assert "main.py" in names
+
+    def test_empty_blacklist(self, tmp_path):
+        (tmp_path / "file.py").write_text("code")
+        files = _collect_files(tmp_path, blacklist=[])
+        assert any(f.name == "file.py" for f in files)
+
+    def test_convert_with_blacklist(self, tmp_path):
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "included.py").write_text("# included")
+        (src / "excluded.py").write_text("# excluded")
+        out = tmp_path / "out.pdf"
+        result = convert(src, output=out, blacklist=["excluded.py"])
+        assert result.exists()
+
+    def test_cli_blacklist_argument(self, tmp_path):
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "main.py").write_text("# main")
+        (src / "secret.py").write_text("# secret")
+        out = tmp_path / "out.pdf"
+        rc = main([str(src), "-o", str(out), "-b", "secret.py"])
+        assert rc == 0
+        assert out.exists()
+
+
+class TestComputeStats:
+    def test_stats_basic(self, tmp_path):
+        (tmp_path / "a.py").write_text("line1\nline2\nline3\n")
+        (tmp_path / "b.md").write_text("# Title\n")
+        files = _collect_files(tmp_path)
+        stats = _compute_stats(files, tmp_path)
+        assert stats["total_files"] == 2
+        assert stats["total_lines"] == 4
+        assert stats["image_count"] == 0
+        assert stats["lines_by_extension"][".py"] == 3
+        assert stats["lines_by_extension"][".md"] == 1
+
+    def test_stats_with_images(self, tmp_path):
+        _write_minimal_png(tmp_path / "photo.png")
+        (tmp_path / "code.py").write_text("x = 1\n")
+        files = _collect_files(tmp_path, include_images=True)
+        stats = _compute_stats(files, tmp_path)
+        assert stats["image_count"] == 1
+        assert stats["total_files"] == 2
+        assert stats["total_lines"] == 1
+
+    def test_stats_empty_folder(self, tmp_path):
+        stats = _compute_stats([], tmp_path)
+        assert stats["total_files"] == 0
+        assert stats["total_lines"] == 0
+        assert stats["image_count"] == 0
+        assert stats["lines_by_extension"] == {}
+
+    def test_convert_includes_summary_in_pdf(self, tmp_path):
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "hello.py").write_text("print('hello')\n")
+        out = tmp_path / "out.pdf"
+        convert(src, output=out)
+        raw = out.read_bytes()
+        # The summary section heading should appear in the PDF
+        assert b"PDF" in raw

@@ -1,8 +1,15 @@
 """Core logic for converting a folder's contents to a PDF document."""
 
 import os
+from collections import defaultdict
 from pathlib import Path
 from fpdf import FPDF
+
+try:
+    import pathspec
+    _PATHSPEC_AVAILABLE = True
+except ImportError:  # pragma: no cover
+    _PATHSPEC_AVAILABLE = False
 
 # File extensions treated as plain text / source code
 TEXT_EXTENSIONS = {
@@ -67,10 +74,79 @@ def _read_text_safe(path: Path, max_chars: int = _MAX_FILE_CHARS) -> str:
         return f"[Error reading file: {exc}]"
 
 
+def _load_gitignore_spec(folder: Path):
+    """
+    Return a *pathspec* ``PathSpec`` built from the ``.gitignore`` file found
+    directly inside *folder*.  Returns *None* when *pathspec* is not installed
+    or no ``.gitignore`` file exists in *folder*.
+    """
+    if not _PATHSPEC_AVAILABLE:
+        return None
+
+    patterns: list[str] = []
+    gitignore = folder / ".gitignore"
+    if gitignore.is_file():
+        try:
+            patterns.extend(gitignore.read_text(encoding="utf-8", errors="replace").splitlines())
+        except OSError:
+            pass
+
+    if not patterns:
+        return None
+
+    return pathspec.PathSpec.from_lines("gitignore", patterns)
+
+
+def _is_gitignored(path: Path, folder: Path, spec) -> bool:
+    """Return True if *path* matches the gitignore *spec* relative to *folder*."""
+    if spec is None:
+        return False
+    try:
+        rel = path.relative_to(folder)
+    except ValueError:
+        return False
+    # pathspec expects forward-slash paths
+    return spec.match_file(rel.as_posix())
+
+
+def _compile_blacklist(patterns: list[str]) -> list:
+    """
+    Return a list of compiled pathspec ``PathSpec`` matchers, one per pattern.
+    Falls back to simple fnmatch-based matching when pathspec is unavailable.
+    """
+    if not patterns:
+        return []
+    if _PATHSPEC_AVAILABLE:
+        return [pathspec.PathSpec.from_lines("gitignore", [p]) for p in patterns]
+    import fnmatch
+    return patterns  # raw patterns; matched via fnmatch below
+
+
+def _is_blacklisted(path: Path, folder: Path, compiled_blacklist: list) -> bool:
+    """Return True if *path* is matched by any entry in *compiled_blacklist*."""
+    if not compiled_blacklist:
+        return False
+    try:
+        rel = path.relative_to(folder)
+    except ValueError:
+        return False
+    rel_posix = rel.as_posix()
+    if _PATHSPEC_AVAILABLE:
+        return any(spec.match_file(rel_posix) for spec in compiled_blacklist)
+    import fnmatch
+    name = path.name
+    for pattern in compiled_blacklist:
+        if fnmatch.fnmatch(name, pattern) or fnmatch.fnmatch(rel_posix, pattern):
+            return True
+    return False
+
+
 def _collect_files(
     folder: Path,
     include_images: bool = True,
     extensions: set[str] | None = None,
+    blacklist: list[str] | None = None,
+    use_gitignore: bool = True,
 ) -> list[Path]:
     """
     Walk *folder* recursively and return a sorted list of files to include.
@@ -85,6 +161,12 @@ def _collect_files(
         If provided, only include files whose suffix (lower-cased) is in this
         set.  When *None* the default TEXT_EXTENSIONS (plus IMAGE_EXTENSIONS if
         *include_images* is True) are used.
+    blacklist:
+        Optional list of glob patterns (gitignore-style) for files/directories
+        to exclude, e.g. ``["*.log", "tests/", "secret.txt"]``.
+    use_gitignore:
+        When *True* (the default) read the ``.gitignore`` in *folder* and skip
+        any file it matches.
     """
     allowed: set[str]
     if extensions is not None:
@@ -94,6 +176,9 @@ def _collect_files(
         if include_images:
             allowed |= IMAGE_EXTENSIONS
 
+    gitignore_spec = _load_gitignore_spec(folder) if use_gitignore else None
+    compiled_bl = _compile_blacklist(blacklist or [])
+
     results: list[Path] = []
     for root, dirs, files in os.walk(folder):
         # Skip hidden directories (e.g. .git, .venv)
@@ -102,12 +187,52 @@ def _collect_files(
             if name.startswith("."):
                 continue
             p = Path(root) / name
-            if p.suffix.lower() in allowed:
-                results.append(p)
+            if p.suffix.lower() not in allowed:
+                continue
+            if _is_gitignored(p, folder, gitignore_spec):
+                continue
+            if _is_blacklisted(p, folder, compiled_bl):
+                continue
+            results.append(p)
 
     # Return paths in a stable, globally sorted order
     results.sort(key=lambda p: str(p))
     return results
+
+
+def _compute_stats(files: list[Path], folder: Path) -> dict:
+    """
+    Compute statistics for the collected *files*.
+
+    Returns a dict with keys:
+      total_files        – total number of files
+      total_lines        – total lines across all text files
+      image_count        – number of image files
+      lines_by_extension – dict mapping extension -> line count (text files only)
+    """
+    total_lines = 0
+    image_count = 0
+    lines_by_ext: dict[str, int] = defaultdict(int)
+
+    for f in files:
+        if _is_image_file(f):
+            image_count += 1
+        else:
+            try:
+                with open(f, encoding="utf-8", errors="replace") as fh:
+                    lines = sum(1 for _ in fh)
+            except OSError:
+                lines = 0
+            total_lines += lines
+            ext = f.suffix.lower() or ""
+            lines_by_ext[ext] += lines
+
+    return {
+        "total_files": len(files),
+        "total_lines": total_lines,
+        "image_count": image_count,
+        "lines_by_extension": dict(lines_by_ext),
+    }
 
 
 class FolderPDF(FPDF):
@@ -154,6 +279,8 @@ def convert(
     output: str | Path = "output.pdf",
     include_images: bool = True,
     extensions: list[str] | None = None,
+    blacklist: list[str] | None = None,
+    use_gitignore: bool = True,
 ) -> Path:
     """
     Generate a PDF from the contents of *folder*.
@@ -169,6 +296,12 @@ def convert(
     extensions:
         Optional list of file extensions to include (e.g. ``[".py", ".md"]``).
         When *None* the built-in defaults are used.
+    blacklist:
+        Optional list of glob patterns (gitignore-style) for files/directories
+        to exclude, e.g. ``["*.log", "tests/", "secret.txt"]``.
+    use_gitignore:
+        When *True* (the default) read the ``.gitignore`` in *folder* and skip
+        any file it matches.
 
     Returns
     -------
@@ -189,7 +322,15 @@ def convert(
     output = Path(output)
 
     ext_set: set[str] | None = set(extensions) if extensions is not None else None
-    files = _collect_files(folder, include_images=include_images, extensions=ext_set)
+    files = _collect_files(
+        folder,
+        include_images=include_images,
+        extensions=ext_set,
+        blacklist=blacklist,
+        use_gitignore=use_gitignore,
+    )
+
+    stats = _compute_stats(files, folder)
 
     pdf = FolderPDF(folder_name=str(folder), orientation="P", unit="mm", format="A4")
     pdf.setup_fonts()
@@ -210,9 +351,10 @@ def convert(
     pdf.set_text_color(100, 100, 100)
     pdf.cell(0, 6, str(folder), align="C", new_x="LMARGIN", new_y="NEXT")
     pdf.set_text_color(0, 0, 0)
-    pdf.ln(8)
-    pdf.set_font("Helvetica", size=10)
-    pdf.cell(0, 6, f"Files included: {len(files)}", align="C", new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(10)
+
+    # Project summary block
+    _add_summary_section(pdf, stats)
 
     # ------------------------------------------------------------------ #
     # Table of contents                                                    #
@@ -256,6 +398,47 @@ def convert(
     output.parent.mkdir(parents=True, exist_ok=True)
     pdf.output(str(output))
     return output.resolve()
+
+
+def _add_summary_section(pdf: FolderPDF, stats: dict) -> None:
+    """Render the Project Summary block on the cover page."""
+    col_label = 40   # mm – width of the label column
+    col_value = 30   # mm – width of the value column
+
+    def _row(label: str, value: str) -> None:
+        pdf.set_font("Helvetica", style="B", size=10)
+        lbl = label if pdf._unicode_mono else _sanitize_for_builtin_font(label)
+        pdf.cell(col_label, 6, lbl, new_x="RIGHT", new_y="TOP")
+        pdf.set_font("Helvetica", size=10)
+        val = value if pdf._unicode_mono else _sanitize_for_builtin_font(value)
+        pdf.cell(col_value, 6, val, new_x="LMARGIN", new_y="NEXT")
+
+    pdf.set_font("Helvetica", style="B", size=12)
+    pdf.cell(0, 8, "Project Summary", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_draw_color(180, 180, 180)
+    pdf.line(pdf.get_x(), pdf.get_y(), pdf.get_x() + 80, pdf.get_y())
+    pdf.ln(3)
+
+    _row("Total Files Processed:", str(stats["total_files"]))
+    _row("Total Lines of Code:", str(stats["total_lines"]))
+    _row("Image Files:", str(stats["image_count"]))
+
+    lines_by_ext: dict[str, int] = stats["lines_by_extension"]
+    if lines_by_ext:
+        pdf.ln(4)
+        pdf.set_font("Helvetica", style="B", size=10)
+        pdf.cell(0, 6, "Lines by Extension:", new_x="LMARGIN", new_y="NEXT")
+        pdf.set_font("Helvetica", size=10)
+        sorted_exts = sorted(lines_by_ext.items(), key=lambda kv: kv[1], reverse=True)
+        for ext, count in sorted_exts:
+            ext_lbl = f"  {ext}"
+            if not pdf._unicode_mono:
+                ext_lbl = _sanitize_for_builtin_font(ext_lbl)
+            pdf.cell(col_label, 6, ext_lbl, new_x="RIGHT", new_y="TOP")
+            cnt_str = f"{count} lines"
+            if not pdf._unicode_mono:
+                cnt_str = _sanitize_for_builtin_font(cnt_str)
+            pdf.cell(col_value, 6, cnt_str, new_x="LMARGIN", new_y="NEXT")
 
 
 def _add_text_section(pdf: FolderPDF, path: Path) -> None:

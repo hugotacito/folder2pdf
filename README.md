@@ -9,14 +9,7 @@ The output is useful for AI ingestion tools like **NotebookLLM**.
 ## Installation
 
 ```bash
-pip install .
-```
-
-Or install from the requirements file:
-
-```bash
-pip install -r requirements.txt
-python -m folder2pdf.cli <folder> [options]
+pip install folder2pdf
 ```
 
 ---

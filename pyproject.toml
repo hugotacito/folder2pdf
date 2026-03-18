@@ -9,11 +9,30 @@ description = "Generate a PDF from a folder's contents (text files and images)"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.10"
+keywords = ["pdf", "folder", "converter", "cli", "notebookllm"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Utilities",
+    "Topic :: Text Processing",
+]
 dependencies = [
     "fpdf2>=2.7.0",
     "Pillow>=10.0.0",
     "pathspec>=0.11.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/hugotacito/folder2pdf"
+Repository = "https://github.com/hugotacito/folder2pdf"
+"Bug Tracker" = "https://github.com/hugotacito/folder2pdf/issues"
 
 [project.scripts]
 folder2pdf = "folder2pdf.cli:main"

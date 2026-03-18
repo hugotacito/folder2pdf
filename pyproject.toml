@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "folder2pdf"
+version = "0.1.0"
+description = "Generate a PDF from a folder's contents (text files and images)"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+dependencies = [
+    "fpdf2>=2.7.0",
+    "Pillow>=10.0.0",
+]
+
+[project.scripts]
+folder2pdf = "folder2pdf.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["folder2pdf*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

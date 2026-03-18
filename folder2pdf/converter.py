@@ -236,11 +236,10 @@ def _compute_stats(files: list[Path], folder: Path) -> dict:
 
 
 class FolderPDF(FPDF):
-    """Custom FPDF subclass that adds a header and footer to every page."""
+    """Custom FPDF subclass that adds a footer to every page."""
 
-    def __init__(self, folder_name: str, *args, **kwargs):
+    def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self._folder_name = folder_name
         self._unicode_mono = False
 
     def setup_fonts(self) -> None:
@@ -255,16 +254,6 @@ class FolderPDF(FPDF):
             self.set_font(_MONO_FONT_FAMILY, size=size)
         else:
             self.set_font("Courier", size=size)
-
-    def header(self):
-        self.set_font("Helvetica", style="I", size=8)
-        self.set_text_color(150, 150, 150)
-        label = self._folder_name
-        if not self._unicode_mono:
-            label = _sanitize_for_builtin_font(label)
-        self.cell(0, 6, label, align="L")
-        self.ln(2)
-        self.set_text_color(0, 0, 0)
 
     def footer(self):
         self.set_y(-12)
@@ -332,7 +321,7 @@ def convert(
 
     stats = _compute_stats(files, folder)
 
-    pdf = FolderPDF(folder_name=str(folder), orientation="P", unit="mm", format="A4")
+    pdf = FolderPDF(orientation="P", unit="mm", format="A4")
     pdf.setup_fonts()
     pdf.set_margins(_MARGIN, _MARGIN, _MARGIN)
     pdf.set_auto_page_break(auto=True, margin=_MARGIN)

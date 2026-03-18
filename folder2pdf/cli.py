@@ -41,6 +41,21 @@ def build_parser() -> argparse.ArgumentParser:
             "When omitted the built-in defaults are used."
         ),
     )
+    parser.add_argument(
+        "-b", "--blacklist",
+        nargs="+",
+        metavar="PATTERN",
+        help=(
+            "Glob patterns (gitignore-style) for files or directories to exclude, "
+            "e.g. 'tests/ *.log secret.txt'. Can be specified multiple times."
+        ),
+    )
+    parser.add_argument(
+        "--no-gitignore",
+        action="store_true",
+        default=False,
+        help="Do not read or apply the .gitignore file found in the target folder.",
+    )
     return parser
 
 
@@ -57,6 +72,8 @@ def main(argv: list[str] | None = None) -> int:
             output=output,
             include_images=not args.no_images,
             extensions=args.extensions,
+            blacklist=args.blacklist,
+            use_gitignore=not args.no_gitignore,
         )
         print(f"PDF generated: {result}")
         return 0

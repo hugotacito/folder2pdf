@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "folder2pdf"
-version = "0.1.0"
+version = "0.1.1"
 description = "Generate a PDF from a folder's contents (text files and images)"
 readme = "README.md"
 license = { text = "MIT" }

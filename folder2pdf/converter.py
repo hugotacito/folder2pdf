@@ -25,9 +25,6 @@ TEXT_EXTENSIONS = {
 # File extensions treated as images
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".tiff", ".tif"}
 
-# Maximum characters read from a single text file
-_MAX_FILE_CHARS = 100_000
-
 # Points per mm (fpdf uses mm by default)
 _MARGIN = 15
 
@@ -62,12 +59,16 @@ def _is_image_file(path: Path) -> bool:
     return path.suffix.lower() in IMAGE_EXTENSIONS
 
 
-def _read_text_safe(path: Path, max_chars: int = _MAX_FILE_CHARS) -> str:
-    """Read text from *path*, truncating at *max_chars* if needed."""
+def _read_text_safe(path: Path, max_chars: int | None = None) -> str:
+    """Read text from *path*, truncating at *max_chars* characters if provided.
+
+    When *max_chars* is *None* the entire file is read into memory; callers
+    should be aware of memory consumption for very large files.
+    """
     try:
         with open(path, encoding="utf-8", errors="replace") as fh:
             content = fh.read(max_chars)
-        if len(content) == max_chars:
+        if max_chars is not None and len(content) == max_chars:
             content += "\n\n[... file truncated ...]"
         return content
     except OSError as exc:
@@ -270,6 +271,7 @@ def convert(
     extensions: list[str] | None = None,
     blacklist: list[str] | None = None,
     use_gitignore: bool = True,
+    max_chars: int | None = None,
 ) -> Path:
     """
     Generate a PDF from the contents of *folder*.
@@ -291,6 +293,9 @@ def convert(
     use_gitignore:
         When *True* (the default) read the ``.gitignore`` in *folder* and skip
         any file it matches.
+    max_chars:
+        When provided, truncate each text file at this many characters and
+        append a notice.  When *None* (the default) files are read in full.
 
     Returns
     -------
@@ -382,7 +387,7 @@ def convert(
         if is_image:
             _add_image_section(pdf, f, rel)
         else:
-            _add_text_section(pdf, f)
+            _add_text_section(pdf, f, max_chars=max_chars)
 
     output.parent.mkdir(parents=True, exist_ok=True)
     pdf.output(str(output))
@@ -430,9 +435,9 @@ def _add_summary_section(pdf: FolderPDF, stats: dict) -> None:
             pdf.cell(col_value, 6, cnt_str, new_x="LMARGIN", new_y="NEXT")
 
 
-def _add_text_section(pdf: FolderPDF, path: Path) -> None:
+def _add_text_section(pdf: FolderPDF, path: Path, max_chars: int | None = None) -> None:
     """Add a text/code file section to *pdf*."""
-    content = _read_text_safe(path)
+    content = _read_text_safe(path, max_chars=max_chars)
     if not pdf._unicode_mono:
         content = _sanitize_for_builtin_font(content)
     pdf.set_mono_font(size=8)

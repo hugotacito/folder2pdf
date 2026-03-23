@@ -56,6 +56,16 @@ def build_parser() -> argparse.ArgumentParser:
         default=False,
         help="Do not read or apply the .gitignore file found in the target folder.",
     )
+    parser.add_argument(
+        "--max-chars",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "Truncate each text file at N characters and append a notice. "
+            "When omitted, files are included in full."
+        ),
+    )
     return parser
 
 
@@ -74,6 +84,7 @@ def main(argv: list[str] | None = None) -> int:
             extensions=args.extensions,
             blacklist=args.blacklist,
             use_gitignore=not args.no_gitignore,
+            max_chars=args.max_chars,
         )
         print(f"PDF generated: {result}")
         return 0

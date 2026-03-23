@@ -129,7 +129,15 @@ class TestReadTextSafe:
         p.write_text("hello world")
         assert _read_text_safe(p) == "hello world"
 
-    def test_truncation(self, tmp_path):
+    def test_no_truncation_by_default(self, tmp_path):
+        p = tmp_path / "big.txt"
+        big_content = "x" * 200_000
+        p.write_text(big_content)
+        result = _read_text_safe(p)
+        assert result == big_content
+        assert "truncated" not in result
+
+    def test_truncation_explicit(self, tmp_path):
         p = tmp_path / "big.txt"
         p.write_text("x" * 200)
         result = _read_text_safe(p, max_chars=50)
@@ -286,6 +294,29 @@ class TestConvert:
         result = convert(src, output=out)
         assert result.exists()
 
+    def test_max_chars_truncates_content(self, tmp_path):
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "big.txt").write_text("x" * 200_000)
+        out_full = tmp_path / "full.pdf"
+        out_trunc = tmp_path / "trunc.pdf"
+        convert(src, output=out_full)
+        convert(src, output=out_trunc, max_chars=100)
+        # Full PDF should be larger than truncated one
+        assert out_full.stat().st_size > out_trunc.stat().st_size
+
+    def test_no_truncation_by_default(self, tmp_path):
+        src = tmp_path / "src"
+        src.mkdir()
+        big_content = "x" * 200_000
+        (src / "big.txt").write_text(big_content)
+        out_full = tmp_path / "full.pdf"
+        out_trunc = tmp_path / "trunc.pdf"
+        convert(src, output=out_full)
+        convert(src, output=out_trunc, max_chars=100)
+        # Full PDF (no truncation) should be larger than the truncated one
+        assert out_full.stat().st_size > out_trunc.stat().st_size
+
 
 # ---------------------------------------------------------------------------
 # CLI tests
@@ -338,6 +369,15 @@ class TestCLI:
         rc = main([str(src)])
         assert rc == 0
         assert (tmp_path / "output.pdf").exists()
+
+    def test_main_max_chars(self, tmp_path):
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "big.txt").write_text("x" * 200_000)
+        out = tmp_path / "out.pdf"
+        rc = main([str(src), "-o", str(out), "--max-chars", "100"])
+        assert rc == 0
+        assert out.exists()
 
 
 # ---------------------------------------------------------------------------

@@ -85,7 +85,7 @@ def _read_text_safe(
                     content += "\n\n[... file truncated ...]"
             else:
                 content = fh.read(max_chars)
-                if max_chars is not None and len(content) == max_chars:
+                if max_chars is not None and max_chars > 0 and len(content) == max_chars and fh.read(1):
                     content += "\n\n[... file truncated ...]"
         return content
     except OSError as exc:
@@ -214,8 +214,13 @@ def _collect_files(
                 continue
             if _is_blacklisted(p, folder, compiled_bl):
                 continue
-            if no_empty_files and not _is_image_file(p) and p.stat().st_size == 0:
-                continue
+            if no_empty_files and not _is_image_file(p):
+                try:
+                    if p.stat().st_size == 0:
+                        continue
+                except OSError:
+                    # If we can't stat the file, keep it; read errors are handled later.
+                    pass
             results.append(p)
 
     # Return paths in a stable, globally sorted order

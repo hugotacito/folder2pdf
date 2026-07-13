@@ -7,6 +7,13 @@ from pathlib import Path
 from .converter import convert
 
 
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return parsed
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="folder2pdf",
@@ -59,7 +66,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--max-chars",
-        type=int,
+        type=_positive_int,
         default=None,
         metavar="N",
         help=(
@@ -75,7 +82,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--max-lines",
-        type=int,
+        type=_positive_int,
         default=None,
         metavar="N",
         help=(

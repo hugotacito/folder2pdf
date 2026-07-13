@@ -394,6 +394,16 @@ class TestCLI:
             build_parser().parse_args(["--help"])
         assert exc.value.code == 0
 
+    def test_max_lines_requires_positive_int(self):
+        with pytest.raises(SystemExit) as exc:
+            build_parser().parse_args(["folder", "--max-lines", "0"])
+        assert exc.value.code == 2
+
+    def test_max_chars_requires_positive_int(self):
+        with pytest.raises(SystemExit) as exc:
+            build_parser().parse_args(["folder", "--max-chars", "-1"])
+        assert exc.value.code == 2
+
     def test_main_creates_pdf(self, tmp_path):
         src = tmp_path / "src"
         src.mkdir()

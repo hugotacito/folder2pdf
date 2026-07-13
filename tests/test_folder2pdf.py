@@ -276,6 +276,22 @@ class TestConvert:
         with pytest.raises(ValueError, match="not a directory"):
             convert(f, output=tmp_path / "out.pdf")
 
+    @pytest.mark.parametrize(
+        ("kwargs", "error_message"),
+        [
+            ({"max_chars": 0}, "max_chars must be a positive integer"),
+            ({"max_chars": -1}, "max_chars must be a positive integer"),
+            ({"max_lines": 0}, "max_lines must be a positive integer"),
+            ({"max_lines": -1}, "max_lines must be a positive integer"),
+        ],
+    )
+    def test_raises_on_non_positive_truncation_limits(self, tmp_path, kwargs, error_message):
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "hello.txt").write_text("hello")
+        with pytest.raises(ValueError, match=error_message):
+            convert(src, output=tmp_path / "out.pdf", **kwargs)
+
     def test_custom_extensions(self, tmp_path):
         src = tmp_path / "src"
         src.mkdir()

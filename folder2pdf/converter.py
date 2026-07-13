@@ -380,12 +380,17 @@ def convert(
     Raises
     ------
     ValueError
-        If *folder* does not exist or is not a directory.
+        If *folder* does not exist or is not a directory, or if *max_chars* /
+        *max_lines* are provided as non-positive values.
     """
     folders = _normalize_folders(folder)
     multi_folder = len(folders) > 1
 
     output = Path(output)
+    if max_chars is not None and max_chars <= 0:
+        raise ValueError("max_chars must be a positive integer")
+    if max_lines is not None and max_lines <= 0:
+        raise ValueError("max_lines must be a positive integer")
 
     ext_set: set[str] | None = set(extensions) if extensions is not None else None
     files_by_folder: list[tuple[Path, Path]] = []

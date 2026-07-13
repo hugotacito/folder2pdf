@@ -35,6 +35,9 @@ folder2pdf <folder> [<folder> ...] [options]
 | `-e`, `--extensions EXT [EXT ...]` | Whitelist of file extensions to include, e.g. `.py .md .txt`. When omitted, built-in defaults are used. |
 | `-b`, `--blacklist PATTERN [PATTERN ...]` | Glob patterns (gitignore-style) for files or directories to exclude, e.g. `tests/ *.log secret.txt`. |
 | `--no-gitignore` | Do not read or apply the `.gitignore` file found in the target folder. |
+| `--max-chars N` | Truncate each text file at N characters and append a notice. |
+| `--no-empty-files` | Skip text files that are empty (zero bytes). |
+| `--max-lines N` | Truncate each text file at N lines and append a notice. Takes precedence over `--max-chars` when both are provided. |
 
 ### Examples
 
@@ -66,6 +69,16 @@ folder2pdf ./my-project -o my-project.pdf -b "tests/" "*.log"
 Ignore `.gitignore` rules:
 ```bash
 folder2pdf ./my-project -o my-project.pdf --no-gitignore
+```
+
+Skip empty files and limit output to 200 lines per file:
+```bash
+folder2pdf ./my-project -o my-project.pdf --no-empty-files --max-lines 200
+```
+
+Truncate each file at 5000 characters:
+```bash
+folder2pdf ./my-project -o my-project.pdf --max-chars 5000
 ```
 
 ---
@@ -112,9 +125,11 @@ pdf_path = convert(
     folder="./my-project",
     output="my-project.pdf",
     include_images=True,
-    extensions=None,       # None = use built-in defaults
+    extensions=None,          # None = use built-in defaults
     blacklist=["tests/", "*.log"],  # optional exclusion patterns
-    use_gitignore=True,    # read & apply .gitignore in the folder
+    use_gitignore=True,       # read & apply .gitignore in the folder
+    no_empty_files=True,      # skip zero-byte text files
+    max_lines=200,            # truncate each text file at 200 lines
 )
 print(f"PDF saved to {pdf_path}")
 ```

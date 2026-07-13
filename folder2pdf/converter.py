@@ -202,7 +202,7 @@ def _collect_files(
     return results
 
 
-def _compute_stats(files: list[Path], folder: Path) -> dict:
+def _compute_stats(files: list[Path]) -> dict:
     """
     Compute statistics for the collected *files*.
 
@@ -240,14 +240,14 @@ def _compute_stats(files: list[Path], folder: Path) -> dict:
 def _normalize_folders(folder: str | Path | Sequence[str | Path]) -> list[Path]:
     """Normalize input folder argument into a validated list of absolute paths."""
     if isinstance(folder, (str, Path)):
-        raw_folders: list[str | Path] = [folder]
+        folder_entries: list[str | Path] = [folder]
     else:
-        raw_folders = list(folder)
+        folder_entries = list(folder)
 
-    if not raw_folders:
+    if not folder_entries:
         raise ValueError("At least one folder must be provided.")
 
-    resolved_folders = [Path(entry).resolve() for entry in raw_folders]
+    resolved_folders = [Path(entry).resolve() for entry in folder_entries]
     for folder_path in resolved_folders:
         if not folder_path.exists():
             raise ValueError(f"Folder does not exist: {folder_path}")
@@ -352,7 +352,7 @@ def convert(
         )
         files_by_folder.extend((folder_path, file_path) for file_path in folder_files)
 
-    stats = _compute_stats([file_path for _, file_path in files_by_folder], folders[0])
+    stats = _compute_stats([file_path for _, file_path in files_by_folder])
 
     pdf = FolderPDF(orientation="P", unit="mm", format="A4")
     pdf.setup_fonts()

@@ -521,7 +521,7 @@ class TestComputeStats:
         (tmp_path / "a.py").write_text("line1\nline2\nline3\n")
         (tmp_path / "b.md").write_text("# Title\n")
         files = _collect_files(tmp_path)
-        stats = _compute_stats(files, tmp_path)
+        stats = _compute_stats(files)
         assert stats["total_files"] == 2
         assert stats["total_lines"] == 4
         assert stats["image_count"] == 0
@@ -532,13 +532,13 @@ class TestComputeStats:
         _write_minimal_png(tmp_path / "photo.png")
         (tmp_path / "code.py").write_text("x = 1\n")
         files = _collect_files(tmp_path, include_images=True)
-        stats = _compute_stats(files, tmp_path)
+        stats = _compute_stats(files)
         assert stats["image_count"] == 1
         assert stats["total_files"] == 2
         assert stats["total_lines"] == 1
 
     def test_stats_empty_folder(self, tmp_path):
-        stats = _compute_stats([], tmp_path)
+        stats = _compute_stats([])
         assert stats["total_files"] == 0
         assert stats["total_lines"] == 0
         assert stats["image_count"] == 0

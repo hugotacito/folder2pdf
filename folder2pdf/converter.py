@@ -1,8 +1,9 @@
-"""Core logic for converting a folder's contents to a PDF document."""
+"""Core logic for converting folder contents to a PDF document."""
 
 import os
 from collections import defaultdict
 from pathlib import Path
+from typing import Sequence
 from fpdf import FPDF
 
 try:
@@ -201,7 +202,7 @@ def _collect_files(
     return results
 
 
-def _compute_stats(files: list[Path], folder: Path) -> dict:
+def _compute_stats(files: list[Path]) -> dict:
     """
     Compute statistics for the collected *files*.
 
@@ -236,6 +237,46 @@ def _compute_stats(files: list[Path], folder: Path) -> dict:
     }
 
 
+def _normalize_folders(folder: str | Path | Sequence[str | Path]) -> list[Path]:
+    """
+    Normalize folder input into a validated list of absolute directory paths.
+
+    Raises
+    ------
+    ValueError
+        If no folder is provided, or if any provided path does not exist or is
+        not a directory.
+    """
+    if isinstance(folder, (str, Path)):
+        folder_entries: list[str | Path] = [folder]
+    else:
+        folder_entries = list(folder)
+
+    if not folder_entries:
+        raise ValueError("At least one folder must be provided.")
+
+    resolved_folders = [Path(entry).resolve() for entry in folder_entries]
+    for folder_path in resolved_folders:
+        if not folder_path.exists():
+            raise ValueError(f"Folder does not exist: {folder_path}")
+        if not folder_path.is_dir():
+            raise ValueError(f"Path is not a directory: {folder_path}")
+    return resolved_folders
+
+
+def _display_path(path: Path, folder: Path, multi_folder: bool) -> str:
+    """
+    Return the path label shown in the table of contents and section headings.
+
+    When *multi_folder* is True the folder name is prefixed to disambiguate
+    entries from different roots.
+    """
+    rel = path.relative_to(folder)
+    if multi_folder:
+        return f"{folder.name}/{rel.as_posix()}"
+    return rel.as_posix()
+
+
 class FolderPDF(FPDF):
     """Custom FPDF subclass that adds a footer to every page."""
 
@@ -265,7 +306,7 @@ class FolderPDF(FPDF):
 
 
 def convert(
-    folder: str | Path,
+    folder: str | Path | Sequence[str | Path],
     output: str | Path = "output.pdf",
     include_images: bool = True,
     extensions: list[str] | None = None,
@@ -274,12 +315,12 @@ def convert(
     max_chars: int | None = None,
 ) -> Path:
     """
-    Generate a PDF from the contents of *folder*.
+    Generate a PDF from the contents of one or more folders.
 
     Parameters
     ----------
     folder:
-        Path to the directory to scan.
+        Path to a directory to scan, or a sequence of directory paths.
     output:
         Destination PDF path.
     include_images:
@@ -307,24 +348,24 @@ def convert(
     ValueError
         If *folder* does not exist or is not a directory.
     """
-    folder = Path(folder).resolve()
-    if not folder.exists():
-        raise ValueError(f"Folder does not exist: {folder}")
-    if not folder.is_dir():
-        raise ValueError(f"Path is not a directory: {folder}")
+    folders = _normalize_folders(folder)
+    multi_folder = len(folders) > 1
 
     output = Path(output)
 
     ext_set: set[str] | None = set(extensions) if extensions is not None else None
-    files = _collect_files(
-        folder,
-        include_images=include_images,
-        extensions=ext_set,
-        blacklist=blacklist,
-        use_gitignore=use_gitignore,
-    )
+    files_by_folder: list[tuple[Path, Path]] = []
+    for folder_path in folders:
+        folder_files = _collect_files(
+            folder_path,
+            include_images=include_images,
+            extensions=ext_set,
+            blacklist=blacklist,
+            use_gitignore=use_gitignore,
+        )
+        files_by_folder.extend((folder_path, file_path) for file_path in folder_files)
 
-    stats = _compute_stats(files, folder)
+    stats = _compute_stats([file_path for _, file_path in files_by_folder])
 
     pdf = FolderPDF(orientation="P", unit="mm", format="A4")
     pdf.setup_fonts()
@@ -339,11 +380,13 @@ def convert(
     pdf.ln(30)
     pdf.cell(0, 12, "Folder Contents", align="C", new_x="LMARGIN", new_y="NEXT")
     pdf.set_font("Helvetica", size=14)
-    pdf.cell(0, 8, folder.name, align="C", new_x="LMARGIN", new_y="NEXT")
+    cover_subtitle = folders[0].name if not multi_folder else f"{len(folders)} folders"
+    pdf.cell(0, 8, cover_subtitle, align="C", new_x="LMARGIN", new_y="NEXT")
     pdf.ln(4)
     pdf.set_font("Helvetica", style="I", size=10)
     pdf.set_text_color(100, 100, 100)
-    pdf.cell(0, 6, str(folder), align="C", new_x="LMARGIN", new_y="NEXT")
+    for folder_path in folders:
+        pdf.cell(0, 6, str(folder_path), align="C", new_x="LMARGIN", new_y="NEXT")
     pdf.set_text_color(0, 0, 0)
     pdf.ln(10)
 
@@ -353,15 +396,14 @@ def convert(
     # ------------------------------------------------------------------ #
     # Table of contents                                                    #
     # ------------------------------------------------------------------ #
-    if files:
+    if files_by_folder:
         pdf.add_page()
         pdf.set_font("Helvetica", style="B", size=16)
         pdf.cell(0, 10, "Table of Contents", new_x="LMARGIN", new_y="NEXT")
         pdf.ln(2)
         pdf.set_font("Helvetica", size=9)
-        for f in files:
-            rel = f.relative_to(folder)
-            entry = str(rel)
+        for folder_path, file_path in files_by_folder:
+            entry = _display_path(file_path, folder_path, multi_folder)
             if not pdf._unicode_mono:
                 entry = _sanitize_for_builtin_font(entry)
             pdf.cell(0, 5, entry, new_x="LMARGIN", new_y="NEXT")
@@ -369,25 +411,26 @@ def convert(
     # ------------------------------------------------------------------ #
     # File sections                                                        #
     # ------------------------------------------------------------------ #
-    for f in files:
-        rel = f.relative_to(folder)
-        is_image = _is_image_file(f)
+    for folder_path, file_path in files_by_folder:
+        rel = file_path.relative_to(folder_path)
+        heading_label = _display_path(file_path, folder_path, multi_folder)
+        is_image = _is_image_file(file_path)
 
         pdf.add_page()
 
         # Section heading
         pdf.set_font("Helvetica", style="B", size=13)
         pdf.set_fill_color(230, 230, 230)
-        heading = str(rel)
+        heading = heading_label
         if not pdf._unicode_mono:
             heading = _sanitize_for_builtin_font(heading)
         pdf.cell(0, 8, heading, fill=True, new_x="LMARGIN", new_y="NEXT")
         pdf.ln(2)
 
         if is_image:
-            _add_image_section(pdf, f, rel)
+            _add_image_section(pdf, file_path, rel)
         else:
-            _add_text_section(pdf, f, max_chars=max_chars)
+            _add_text_section(pdf, file_path, max_chars=max_chars)
 
     output.parent.mkdir(parents=True, exist_ok=True)
     pdf.output(str(output))
@@ -484,4 +527,3 @@ def _add_image_section(pdf: FolderPDF, path: Path, rel: Path) -> None:
             msg = _sanitize_for_builtin_font(msg)
         pdf.cell(0, 6, msg, new_x="LMARGIN", new_y="NEXT")
         pdf.set_text_color(0, 0, 0)
-

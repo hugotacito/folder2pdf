@@ -373,7 +373,7 @@ class TestConvert:
         p = tmp_path / "f.txt"
         p.write_text("\n".join(f"line {i}" for i in range(100)))
         result = _read_text_safe(p, max_lines=5)
-        lines = [l for l in result.split("\n") if not l.startswith("\n") and l]
+        lines = [line for line in result.split("\n") if not line.startswith("\n") and line]
         assert "truncated" in result
         assert "line 0" in result
         assert "line 5" not in result

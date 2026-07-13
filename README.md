@@ -17,14 +17,14 @@ pip install folder2pdf
 ## Usage
 
 ```
-folder2pdf <folder> [options]
+folder2pdf <folder> [<folder> ...] [options]
 ```
 
 ### Arguments
 
 | Argument | Description |
 |---|---|
-| `folder` | Path to the folder to convert. |
+| `folder` | One or more folder paths to convert. |
 
 ### Options
 
@@ -41,6 +41,11 @@ folder2pdf <folder> [options]
 Convert a folder to PDF:
 ```bash
 folder2pdf ./my-project -o my-project.pdf
+```
+
+Convert multiple folders into one PDF:
+```bash
+folder2pdf ./backend ./frontend -o project.pdf
 ```
 
 Convert without images:

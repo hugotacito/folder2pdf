@@ -17,8 +17,9 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
-        "folder",
-        help="Path to the folder to convert.",
+        "folders",
+        nargs="+",
+        help="Path(s) to the folder(s) to convert.",
     )
     parser.add_argument(
         "-o", "--output",
@@ -73,12 +74,12 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
-    folder = Path(args.folder)
+    folders = [Path(folder) for folder in args.folders]
     output = Path(args.output)
 
     try:
         result = convert(
-            folder=folder,
+            folder=folders,
             output=output,
             include_images=not args.no_images,
             extensions=args.extensions,

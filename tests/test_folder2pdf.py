@@ -294,6 +294,18 @@ class TestConvert:
         result = convert(src, output=out)
         assert result.exists()
 
+    def test_multiple_folders(self, tmp_path):
+        src_a = tmp_path / "src_a"
+        src_b = tmp_path / "src_b"
+        src_a.mkdir()
+        src_b.mkdir()
+        (src_a / "a.py").write_text("print('a')\n")
+        (src_b / "b.py").write_text("print('b')\n")
+        out = tmp_path / "out.pdf"
+        result = convert([src_a, src_b], output=out)
+        assert result.exists()
+        assert result.stat().st_size > 0
+
     def test_max_chars_truncates_content(self, tmp_path):
         src = tmp_path / "src"
         src.mkdir()
@@ -376,6 +388,18 @@ class TestCLI:
         (src / "big.txt").write_text("x" * 200_000)
         out = tmp_path / "out.pdf"
         rc = main([str(src), "-o", str(out), "--max-chars", "100"])
+        assert rc == 0
+        assert out.exists()
+
+    def test_main_multiple_folders(self, tmp_path):
+        src_a = tmp_path / "src_a"
+        src_b = tmp_path / "src_b"
+        src_a.mkdir()
+        src_b.mkdir()
+        (src_a / "a.py").write_text("print('a')\n")
+        (src_b / "b.py").write_text("print('b')\n")
+        out = tmp_path / "out.pdf"
+        rc = main([str(src_a), str(src_b), "-o", str(out)])
         assert rc == 0
         assert out.exists()
 

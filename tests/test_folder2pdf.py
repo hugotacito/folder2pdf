@@ -276,6 +276,22 @@ class TestConvert:
         with pytest.raises(ValueError, match="not a directory"):
             convert(f, output=tmp_path / "out.pdf")
 
+    @pytest.mark.parametrize(
+        ("kwargs", "error_message"),
+        [
+            ({"max_chars": 0}, "max_chars must be a positive integer"),
+            ({"max_chars": -1}, "max_chars must be a positive integer"),
+            ({"max_lines": 0}, "max_lines must be a positive integer"),
+            ({"max_lines": -1}, "max_lines must be a positive integer"),
+        ],
+    )
+    def test_raises_on_non_positive_truncation_limits(self, tmp_path, kwargs, error_message):
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "hello.txt").write_text("hello")
+        with pytest.raises(ValueError, match=error_message):
+            convert(src, output=tmp_path / "out.pdf", **kwargs)
+
     def test_custom_extensions(self, tmp_path):
         src = tmp_path / "src"
         src.mkdir()
@@ -329,6 +345,60 @@ class TestConvert:
         # Full PDF (no truncation) should be larger than the truncated one
         assert out_full.stat().st_size > out_trunc.stat().st_size
 
+    def test_no_empty_files_excludes_empty(self, tmp_path):
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "empty.txt").write_text("")
+        (src / "nonempty.txt").write_text("content")
+        files = _collect_files(src, no_empty_files=True)
+        names = {f.name for f in files}
+        assert "empty.txt" not in names
+        assert "nonempty.txt" in names
+
+    def test_no_empty_files_keeps_files_when_false(self, tmp_path):
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "empty.txt").write_text("")
+        files = _collect_files(src, no_empty_files=False)
+        names = {f.name for f in files}
+        assert "empty.txt" in names
+
+    def test_convert_no_empty_files(self, tmp_path):
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "empty.txt").write_text("")
+        (src / "content.txt").write_text("some content\n")
+        out_with = tmp_path / "with_empty.pdf"
+        out_without = tmp_path / "without_empty.pdf"
+        convert(src, output=out_with, no_empty_files=False)
+        convert(src, output=out_without, no_empty_files=True)
+        # PDF without the empty file should be smaller
+        assert out_with.stat().st_size > out_without.stat().st_size
+
+    def test_max_lines_truncates_content(self, tmp_path):
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "long.txt").write_text("\n".join(f"line {i}" for i in range(1000)))
+        out_full = tmp_path / "full.pdf"
+        out_trunc = tmp_path / "trunc.pdf"
+        convert(src, output=out_full)
+        convert(src, output=out_trunc, max_lines=10)
+        assert out_full.stat().st_size > out_trunc.stat().st_size
+
+    def test_read_text_safe_max_lines(self, tmp_path):
+        p = tmp_path / "f.txt"
+        p.write_text("\n".join(f"line {i}" for i in range(100)))
+        result = _read_text_safe(p, max_lines=5)
+        assert "truncated" in result
+        assert result.splitlines()[0] == "line 0"
+        assert "line 5" not in result
+
+    def test_read_text_safe_max_lines_no_truncation_notice_when_short(self, tmp_path):
+        p = tmp_path / "f.txt"
+        p.write_text("line 1\nline 2\n")
+        result = _read_text_safe(p, max_lines=100)
+        assert "truncated" not in result
+
 
 # ---------------------------------------------------------------------------
 # CLI tests
@@ -339,6 +409,16 @@ class TestCLI:
         with pytest.raises(SystemExit) as exc:
             build_parser().parse_args(["--help"])
         assert exc.value.code == 0
+
+    def test_max_lines_requires_positive_int(self):
+        with pytest.raises(SystemExit) as exc:
+            build_parser().parse_args(["folder", "--max-lines", "0"])
+        assert exc.value.code == 2
+
+    def test_max_chars_requires_positive_int(self):
+        with pytest.raises(SystemExit) as exc:
+            build_parser().parse_args(["folder", "--max-chars", "-1"])
+        assert exc.value.code == 2
 
     def test_main_creates_pdf(self, tmp_path):
         src = tmp_path / "src"
@@ -388,6 +468,25 @@ class TestCLI:
         (src / "big.txt").write_text("x" * 200_000)
         out = tmp_path / "out.pdf"
         rc = main([str(src), "-o", str(out), "--max-chars", "100"])
+        assert rc == 0
+        assert out.exists()
+
+    def test_main_no_empty_files(self, tmp_path):
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "empty.txt").write_text("")
+        (src / "nonempty.txt").write_text("content")
+        out = tmp_path / "out.pdf"
+        rc = main([str(src), "-o", str(out), "--no-empty-files"])
+        assert rc == 0
+        assert out.exists()
+
+    def test_main_max_lines(self, tmp_path):
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "long.txt").write_text("\n".join(f"line {i}" for i in range(1000)))
+        out = tmp_path / "out.pdf"
+        rc = main([str(src), "-o", str(out), "--max-lines", "10"])
         assert rc == 0
         assert out.exists()
 

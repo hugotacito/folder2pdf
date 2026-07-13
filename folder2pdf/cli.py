@@ -7,6 +7,13 @@ from pathlib import Path
 from .converter import convert
 
 
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return parsed
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="folder2pdf",
@@ -59,12 +66,29 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--max-chars",
-        type=int,
+        type=_positive_int,
         default=None,
         metavar="N",
         help=(
             "Truncate each text file at N characters and append a notice. "
             "When omitted, files are included in full."
+        ),
+    )
+    parser.add_argument(
+        "--no-empty-files",
+        action="store_true",
+        default=False,
+        help="Skip text files that are empty (zero bytes).",
+    )
+    parser.add_argument(
+        "--max-lines",
+        type=_positive_int,
+        default=None,
+        metavar="N",
+        help=(
+            "Truncate each text file at N lines and append a notice. "
+            "Takes precedence over --max-chars when both are provided. "
+            "When omitted, no line-based truncation is applied."
         ),
     )
     return parser
@@ -86,6 +110,8 @@ def main(argv: list[str] | None = None) -> int:
             blacklist=args.blacklist,
             use_gitignore=not args.no_gitignore,
             max_chars=args.max_chars,
+            no_empty_files=args.no_empty_files,
+            max_lines=args.max_lines,
         )
         print(f"PDF generated: {result}")
         return 0

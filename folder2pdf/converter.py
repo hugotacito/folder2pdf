@@ -60,17 +60,33 @@ def _is_image_file(path: Path) -> bool:
     return path.suffix.lower() in IMAGE_EXTENSIONS
 
 
-def _read_text_safe(path: Path, max_chars: int | None = None) -> str:
-    """Read text from *path*, truncating at *max_chars* characters if provided.
+def _read_text_safe(
+    path: Path,
+    max_chars: int | None = None,
+    max_lines: int | None = None,
+) -> str:
+    """Read text from *path*, truncating at *max_chars* characters or *max_lines* lines if provided.
 
-    When *max_chars* is *None* the entire file is read into memory; callers
-    should be aware of memory consumption for very large files.
+    When both *max_chars* and *max_lines* are *None* the entire file is read
+    into memory; callers should be aware of memory consumption for very large
+    files.  When both are provided, *max_lines* takes precedence.
     """
     try:
         with open(path, encoding="utf-8", errors="replace") as fh:
-            content = fh.read(max_chars)
-        if max_chars is not None and len(content) == max_chars:
-            content += "\n\n[... file truncated ...]"
+            if max_lines is not None:
+                lines: list[str] = []
+                for _ in range(max_lines):
+                    line = fh.readline()
+                    if not line:
+                        break
+                    lines.append(line)
+                content = "".join(lines)
+                if fh.read(1):
+                    content += "\n\n[... file truncated ...]"
+            else:
+                content = fh.read(max_chars)
+                if max_chars is not None and max_chars > 0 and len(content) == max_chars and fh.read(1):
+                    content += "\n\n[... file truncated ...]"
         return content
     except OSError as exc:
         return f"[Error reading file: {exc}]"
@@ -149,6 +165,7 @@ def _collect_files(
     extensions: set[str] | None = None,
     blacklist: list[str] | None = None,
     use_gitignore: bool = True,
+    no_empty_files: bool = False,
 ) -> list[Path]:
     """
     Walk *folder* recursively and return a sorted list of files to include.
@@ -169,6 +186,8 @@ def _collect_files(
     use_gitignore:
         When *True* (the default) read the ``.gitignore`` in *folder* and skip
         any file it matches.
+    no_empty_files:
+        When *True*, skip text files that are empty (zero bytes).
     """
     allowed: set[str]
     if extensions is not None:
@@ -195,6 +214,13 @@ def _collect_files(
                 continue
             if _is_blacklisted(p, folder, compiled_bl):
                 continue
+            if no_empty_files and not _is_image_file(p):
+                try:
+                    if p.stat().st_size == 0:
+                        continue
+                except OSError:
+                    # If we can't stat the file, keep it; read errors are handled later.
+                    pass
             results.append(p)
 
     # Return paths in a stable, globally sorted order
@@ -313,6 +339,8 @@ def convert(
     blacklist: list[str] | None = None,
     use_gitignore: bool = True,
     max_chars: int | None = None,
+    no_empty_files: bool = False,
+    max_lines: int | None = None,
 ) -> Path:
     """
     Generate a PDF from the contents of one or more folders.
@@ -337,6 +365,12 @@ def convert(
     max_chars:
         When provided, truncate each text file at this many characters and
         append a notice.  When *None* (the default) files are read in full.
+    no_empty_files:
+        When *True*, skip text files that are empty (zero bytes).
+    max_lines:
+        When provided, truncate each text file at this many lines and append a
+        notice.  Takes precedence over *max_chars* when both are provided.
+        When *None* (the default) no line-based truncation is applied.
 
     Returns
     -------
@@ -346,12 +380,17 @@ def convert(
     Raises
     ------
     ValueError
-        If *folder* does not exist or is not a directory.
+        If *folder* does not exist or is not a directory, or if *max_chars* /
+        *max_lines* are provided as non-positive values.
     """
     folders = _normalize_folders(folder)
     multi_folder = len(folders) > 1
 
     output = Path(output)
+    if max_chars is not None and max_chars <= 0:
+        raise ValueError("max_chars must be a positive integer")
+    if max_lines is not None and max_lines <= 0:
+        raise ValueError("max_lines must be a positive integer")
 
     ext_set: set[str] | None = set(extensions) if extensions is not None else None
     files_by_folder: list[tuple[Path, Path]] = []
@@ -362,6 +401,7 @@ def convert(
             extensions=ext_set,
             blacklist=blacklist,
             use_gitignore=use_gitignore,
+            no_empty_files=no_empty_files,
         )
         files_by_folder.extend((folder_path, file_path) for file_path in folder_files)
 
@@ -430,7 +470,7 @@ def convert(
         if is_image:
             _add_image_section(pdf, file_path, rel)
         else:
-            _add_text_section(pdf, file_path, max_chars=max_chars)
+            _add_text_section(pdf, file_path, max_chars=max_chars, max_lines=max_lines)
 
     output.parent.mkdir(parents=True, exist_ok=True)
     pdf.output(str(output))
@@ -478,9 +518,14 @@ def _add_summary_section(pdf: FolderPDF, stats: dict) -> None:
             pdf.cell(col_value, 6, cnt_str, new_x="LMARGIN", new_y="NEXT")
 
 
-def _add_text_section(pdf: FolderPDF, path: Path, max_chars: int | None = None) -> None:
+def _add_text_section(
+    pdf: FolderPDF,
+    path: Path,
+    max_chars: int | None = None,
+    max_lines: int | None = None,
+) -> None:
     """Add a text/code file section to *pdf*."""
-    content = _read_text_safe(path, max_chars=max_chars)
+    content = _read_text_safe(path, max_chars=max_chars, max_lines=max_lines)
     if not pdf._unicode_mono:
         content = _sanitize_for_builtin_font(content)
     pdf.set_mono_font(size=8)

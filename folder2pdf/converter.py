@@ -238,7 +238,15 @@ def _compute_stats(files: list[Path]) -> dict:
 
 
 def _normalize_folders(folder: str | Path | Sequence[str | Path]) -> list[Path]:
-    """Normalize input folder argument into a validated list of absolute paths."""
+    """
+    Normalize folder input into a validated list of absolute directory paths.
+
+    Raises
+    ------
+    ValueError
+        If no folder is provided, or if any provided path does not exist or is
+        not a directory.
+    """
     if isinstance(folder, (str, Path)):
         folder_entries: list[str | Path] = [folder]
     else:
@@ -257,7 +265,12 @@ def _normalize_folders(folder: str | Path | Sequence[str | Path]) -> list[Path]:
 
 
 def _display_path(path: Path, folder: Path, multi_folder: bool) -> str:
-    """Return display path for TOC/headings."""
+    """
+    Return the path label shown in the table of contents and section headings.
+
+    When *multi_folder* is True the folder name is prefixed to disambiguate
+    entries from different roots.
+    """
     rel = path.relative_to(folder)
     if multi_folder:
         return f"{folder.name}/{rel.as_posix()}"
@@ -399,6 +412,7 @@ def convert(
     # File sections                                                        #
     # ------------------------------------------------------------------ #
     for folder_path, file_path in files_by_folder:
+        rel = file_path.relative_to(folder_path)
         heading_label = _display_path(file_path, folder_path, multi_folder)
         is_image = _is_image_file(file_path)
 
@@ -414,7 +428,7 @@ def convert(
         pdf.ln(2)
 
         if is_image:
-            _add_image_section(pdf, file_path, Path(heading_label))
+            _add_image_section(pdf, file_path, rel)
         else:
             _add_text_section(pdf, file_path, max_chars=max_chars)
 
